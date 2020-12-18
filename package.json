@@ -1,20 +1,17 @@
 {
   "name": "@rschristian/create-preact-app",
   "version": "0.1.1",
-  "description": "Start building a Preact Progressive Web App in seconds",
-  "repository": "preactjs/preact-cli",
   "bin": {
     "create-preact-app": "lib/index.js"
   },
   "license": "MIT",
+  "description": "Start building a Preact Progressive Web App in seconds",
+  "repository": "rschristian/create-preact-app",
   "files": [
     "lib"
   ],
   "engines": {
     "node": ">=10"
-  },
-  "devDependencies": {
-    "mkdirp": "^1.0.4"
   },
   "dependencies": {
     "cross-spawn-promise": "^0.10.2",
@@ -22,6 +19,7 @@
     "gittar": "^0.1.1",
     "glob": "^7.1.6",
     "kleur": "^4.0.2",
+    "mkdirp": "^1.0.4",
     "prompts": "^2.3.2",
     "sade": "^1.4.1",
     "validate-npm-package-name": "^3.0.0",
