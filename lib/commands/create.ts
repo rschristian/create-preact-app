@@ -1,68 +1,42 @@
-const { promisify } = require('util');
-const fetch = require('isomorphic-unfetch');
-const glob = promisify(require('glob').glob);
-const gittar = require('gittar');
-const mkdirp = require('mkdirp');
-const fs = require('../fs');
-const os = require('os');
-const { green, red } = require('kleur');
-const { resolve, join } = require('path');
-const { prompt } = require('prompts');
-const isValidName = require('validate-npm-package-name');
-const { info, isDir, hasCommand, error, trim, warn, dirExists, normalizeTemplatesResponse } = require('../util');
-const { install, initGit } = require('../lib/setup');
-const { validateArgs } = require('./validateArgs');
+import { promisify } from 'util';
+import { glob } from 'glob';
+// @ts-ignore
+import gittar from 'gittar';
+import os from 'os';
+import { existsSync, mkdirSync } from 'fs';
+import { copyFile, mkdir, readFile, writeFile } from 'fs/promises';
+import { green } from 'kleur/colors';
+import { resolve, join } from 'path';
+import { prompt } from 'prompts';
+import isValidName from 'validate-npm-package-name';
+import {
+    info,
+    isDir,
+    error,
+    trim,
+    warn,
+    dirExists,
+    normalizeTemplatesResponse,
+    templateInfo,
+    ProcessedRepo,
+} from '../util';
+import { install, initGit } from '../lib/setup';
+import { ArgvOption, validateArgs } from './validateArgs';
+import {
+    CUSTOM_TEMPLATE,
+    FALLBACK_TEMPLATE_OPTIONS,
+    ORG,
+    TEMPLATES_CACHE_FILENAME,
+    TEMPLATES_CACHE_FOLDER,
+} from '../constants';
 
-const TEMPLATES_REPO_URL = 'https://api.github.com/users/preactjs-templates/repos';
+const globPromise = promisify(glob);
 
-const CUSTOM_TEMPLATE = {
-    value: 'custom',
-    title: 'Custom',
-    description: 'Use your own template',
-};
-
-const FALLBACK_TEMPLATE_OPTIONS = [
-    {
-        value: 'preactjs-templates/default',
-        title: 'default',
-        description: 'The default template for Preact CLI',
-    },
-    {
-        value: 'preactjs-templates/typescript',
-        title: 'typescript',
-        description: 'The default template for Preact CLI in typescript',
-    },
-    {
-        value: 'preactjs-templates/material',
-        title: 'material',
-        description: 'The material design `preact-cli` template',
-    },
-    {
-        value: 'preactjs-templates/simple',
-        title: 'simple',
-        description: 'A simple, minimal "Hello World" template for Preact CLI',
-    },
-    {
-        value: 'preactjs-templates/netlify',
-        title: 'netlify',
-        description: 'A preactjs and netlify CMS template',
-    },
-    {
-        value: 'preactjs-templates/widget',
-        title: 'widget',
-        description: 'Template for a widget to be embedded in another website',
-    },
-];
-
-const TEMPLATES_CACHE_FOLDER = '.cache';
-const TEMPLATES_CACHE_FILENAME = 'preact-templates.json';
-
-const ORG = 'preactjs-templates';
 const RGX = /\.(woff2?|ttf|eot|jpe?g|ico|png|gif|webp|mp4|mov|ogg|webm)(\?.*)?$/i;
-const isMedia = (str) => RGX.test(str);
-const capitalize = (str) => str.charAt(0).toUpperCase() + str.substring(1);
+const isMedia = (str: string) => RGX.test(str);
+const capitalize = (str: string) => str.charAt(0).toUpperCase() + str.substring(1);
 
-const options = [
+export const options: ArgvOption[] = [
     {
         name: '--name',
         description: 'The application name',
@@ -85,7 +59,7 @@ const options = [
     {
         name: '--git',
         description: 'Initialize git repository',
-        default: false,
+        default: true,
     },
     {
         name: '-v, --verbose',
@@ -94,12 +68,22 @@ const options = [
     },
 ];
 
+type Argv = {
+    template: string;
+    dest: string;
+    name: string;
+    cwd: string;
+    force: boolean;
+    install: boolean;
+    git: boolean;
+    verbose: boolean;
+};
+
 // Formulate Questions if `create` args are missing
-function requestParams(argv, templates) {
+function requestParams(argv: Argv, templates: ProcessedRepo[]) {
     const cwd = resolve(argv.cwd);
 
     return [
-        // Required data
         {
             type: argv.template ? null : 'select',
             name: 'template',
@@ -108,7 +92,7 @@ function requestParams(argv, templates) {
             initial: 0,
         },
         {
-            type: (prev) => (prev === 'custom' ? 'text' : null),
+            type: (prev: string) => (prev === 'custom' ? 'text' : null),
             name: 'template',
             message: 'Remote template to clone (user/repo#tag)',
         },
@@ -118,11 +102,11 @@ function requestParams(argv, templates) {
             message: 'Directory to create the app',
         },
         {
-            type: (prev) => (!dirExists(cwd, prev || argv.dest) ? null : 'confirm'),
+            type: (prev: string) => (!dirExists(cwd, prev || argv.dest) ? null : 'confirm'),
             name: 'force',
             message: 'The destination directory exists. Overwrite?',
             initial: false,
-            onState: (state) => {
+            onState: (state: { value: string; aborted: boolean }) => {
                 if (state.aborted || !state.value) {
                     process.stdout.write('\n');
                     warn('Aborting due to existing directory');
@@ -130,7 +114,6 @@ function requestParams(argv, templates) {
                 }
             },
         },
-        // Extra data / flags
         {
             type: argv.name ? null : 'text',
             name: 'name',
@@ -153,10 +136,9 @@ function requestParams(argv, templates) {
 
 async function updateTemplatesCache() {
     const cacheFilePath = join(os.homedir(), TEMPLATES_CACHE_FOLDER, TEMPLATES_CACHE_FILENAME);
-
     try {
-        const repos = await fetch(TEMPLATES_REPO_URL).then((r) => r.json());
-        await fs.writeFile(cacheFilePath, JSON.stringify(repos, null, 2), 'utf-8');
+        const repos = await templateInfo();
+        await writeFile(cacheFilePath, JSON.stringify(repos, null, 2), 'utf-8');
     } catch (err) {
         error(`\nFailed to update template cache\n ${err}`);
     }
@@ -172,21 +154,19 @@ async function fetchTemplates() {
         info('Fetching official templates:\n');
 
         // check if `.cache` folder exists or not, and create if does not exists
-        if (!fs.existsSync(cacheFolder)) {
-            await fs.mkdir(cacheFolder);
-        }
+        if (!existsSync(cacheFolder)) await mkdir(cacheFolder);
 
         // If cache file doesn't exist, then hit the API and fetch the data
-        if (!fs.existsSync(cacheFilePath)) {
-            const repos = await fetch(TEMPLATES_REPO_URL).then((r) => r.json());
-            await fs.writeFile(cacheFilePath, JSON.stringify(repos, null, 2), 'utf-8');
+        if (!existsSync(cacheFilePath)) {
+            const repos = await templateInfo();
+            await writeFile(cacheFilePath, JSON.stringify(repos, null, 2), 'utf-8');
         }
 
         // update the cache file without blocking the rest of the tasks.
-        updateTemplatesCache();
+        await updateTemplatesCache();
 
         // fetch the API response from cache file
-        const templatesFromCache = await fs.readFile(cacheFilePath, 'utf-8');
+        const templatesFromCache = await readFile(cacheFilePath, 'utf-8');
         const parsedTemplates = JSON.parse(templatesFromCache);
         const officialTemplates = normalizeTemplatesResponse(parsedTemplates || []);
 
@@ -199,16 +179,14 @@ async function fetchTemplates() {
     return templates;
 }
 
-async function copyFileToDestination(srcPath, destPath, force = false) {
-    if (!fs.existsSync(destPath) || force) {
-        await fs.copyFile(srcPath, destPath);
-    }
+async function copyFileToDestination(srcPath: string, destPath: string, force = false) {
+    if (!existsSync(destPath) || force) await copyFile(srcPath, destPath);
 }
 
-async function command(repo, dest, argv) {
+export async function command(template: string, dest: string, argv: Argv): Promise<void> {
     validateArgs(argv, options, 'create');
     // Prompt if incomplete data
-    if (!repo || !dest) {
+    if (!template || !dest) {
         const templates = await fetchTemplates();
         const questions = requestParams(argv, templates);
         const onCancel = () => {
@@ -218,23 +196,19 @@ async function command(repo, dest, argv) {
         const response = await prompt(questions, { onCancel });
 
         Object.assign(argv, response);
-        repo = repo || response.template;
+        template = template || response.template;
         dest = dest || response.dest;
     }
 
-    if (!repo || !dest) {
+    if (!template || !dest) {
         warn('Insufficient arguments!');
         info('Alternatively, run `preact create --help` for usage info.');
         return;
     }
 
-    let cwd = resolve(argv.cwd);
-    let target = resolve(cwd, dest);
-    const packageManager = /yarn/.test(process.env.npm_execpath) ? 'yarn' : 'npm';
-    if (!hasCommand(packageManager)) {
-        process.stderr.write(`\n${red(`${packageManager} cannot be found`)}\n`);
-        process.exit(1);
-    }
+    const cwd = resolve(argv.cwd);
+    const target = resolve(cwd, dest);
+    const packageManager = /yarn/.test(process.env.npm_execpath || '') ? 'yarn' : 'npm';
     const exists = isDir(target);
 
     if (exists && !argv.force) {
@@ -245,10 +219,10 @@ async function command(repo, dest, argv) {
     }
 
     if (exists && argv.force) {
-        let { enableForce } = await prompt({
+        const { enableForce } = await prompt({
             type: 'confirm',
             name: 'enableForce',
-            message: `You are using '--force'. Do you wish to continue?`,
+            message: "You are using '--force'. Do you wish to continue?",
             initial: false,
         });
 
@@ -262,37 +236,35 @@ async function command(repo, dest, argv) {
     // Use `--name` value or `dest` dir's name
     argv.name = argv.name || dest;
 
-    let { errors } = isValidName(argv.name);
+    const { errors } = isValidName(argv.name);
     if (errors) {
         errors.unshift(`Invalid package name: ${argv.name}`);
         return error(errors.map(capitalize).join('\n  ~ '), 1);
     }
 
-    if (!repo.includes('/')) {
-        repo = `${ORG}/${repo}`;
-        info(`Assuming you meant ${repo}...`);
+    if (!template.includes('/')) {
+        template = `${ORG}/${template}`;
+        info(`Assuming you meant ${template}...`);
     }
 
-    if (!fs.existsSync(resolve(cwd, dest, 'src'))) {
-        mkdirp.sync(resolve(cwd, dest, 'src'));
-    }
+    if (!existsSync(resolve(cwd, dest, 'src'))) mkdirSync(resolve(cwd, dest, 'src'), { recursive: true });
 
     // Attempt to fetch the `template`
-    let archive = await gittar.fetch(repo).catch((err) => {
-        err = err || { message: 'An error occured while fetching template.' };
+    const archive = await gittar.fetch(template).catch((err: any) => {
+        err = err || { message: 'An error occurred while fetching template.' };
 
         return error(
-            err.code === 404 ? `Could not find repository: ${repo}` : (argv.verbose && err.stack) || err.message,
+            err.code === 404 ? `Could not find repository: ${template}` : (argv.verbose && err.stack) || err.message,
             1,
         );
     });
 
     // Extract files from `archive` to `target`
     // TODO: read & respond to meta/hooks
-    let keeps = [];
+    const keeps: string[] = [];
     await gittar.extract(archive, target, {
         strip: 2,
-        filter(path, obj) {
+        filter(path: string, obj: any) {
             if (path.includes('/template/')) {
                 obj.on('end', () => {
                     if (obj.type === 'File' && !isMedia(obj.path)) {
@@ -306,56 +278,46 @@ async function command(repo, dest, argv) {
 
     if (keeps.length) {
         const dict = new Map();
-        const templateVar = (str) => new RegExp(`{{\\s?${str}\\s}}`, 'g');
+        const templateVar = (str: string) => new RegExp(`{{\\s?${str}\\s}}`, 'g');
 
         dict.set(templateVar('pkg-install'), packageManager === 'yarn' ? 'yarn' : 'npm install');
         dict.set(templateVar('pkg-run'), packageManager === 'yarn' ? 'yarn' : 'npm run');
         dict.set(templateVar('pkg-add'), packageManager === 'yarn' ? 'yarn add' : 'npm install');
         dict.set(templateVar('now-year'), new Date().getFullYear());
 
-        // TODO: concat author-driven patterns
-        ['name'].forEach((str) => {
-            // if value is defined
-            if (argv[str] !== void 0) {
-                dict.set(templateVar(str), argv[str]);
-            }
-        });
+        if (argv.name !== void 0) dict.set(templateVar('name'), argv.name);
+
         // Update each file's contents
-        let buf,
-            entry,
-            enc = 'utf8';
-        for (entry of keeps) {
-            buf = await fs.readFile(entry, enc);
+        let buf: string;
+        const enc = 'utf8';
+        for (const entry of keeps) {
+            buf = await readFile(entry, enc);
             dict.forEach((v, k) => {
                 buf = buf.replace(k, v);
             });
-            await fs.writeFile(entry, buf, enc);
+            await writeFile(entry, buf, enc);
         }
     } else {
-        return error(`No \`template\` directory found within ${repo}!`, 1);
+        return error(`No \`template\` directory found within ${template}!`, 1);
     }
 
     // Validate user's `package.json` file
-    let pkgData,
-        pkgFile = resolve(target, 'package.json');
+    let pkgData;
+    const pkgFile = resolve(target, 'package.json');
 
-    if (pkgFile) {
-        pkgData = JSON.parse(await fs.readFile(pkgFile));
-    } else {
-        warn('Could not locate `package.json` file!');
-    }
+    if (pkgFile) pkgData = JSON.parse((await readFile(pkgFile)).toString());
+    else warn('Could not locate `package.json` file!');
 
     // Update `package.json` key
-    if (pkgData) {
-        pkgData.name = argv.name.toLowerCase().replace(/\s+/g, '_');
-    }
+    if (pkgData) pkgData.name = argv.name.toLowerCase().replace(/\s+/g, '_');
+
     // Find a `manifest.json`; use the first match, if any
-    let files = await glob(`${target}/**/manifest.json`);
-    let manifest = files[0] && JSON.parse(await fs.readFile(files[0]));
+    const files = await globPromise(`${target}/**/manifest.json`);
+    const manifest = files[0] && JSON.parse((await readFile(files[0])).toString());
     if (manifest) {
         manifest.name = manifest.short_name = argv.name;
         // Write changes to `manifest.json`
-        await fs.writeFile(files[0], JSON.stringify(manifest, null, 2));
+        await writeFile(files[0], JSON.stringify(manifest, null, 2));
         if (argv.name.length > 12) {
             // @see https://developer.chrome.com/extensions/manifest/name#short_name
             process.stdout.write('\n');
@@ -365,21 +327,21 @@ async function command(repo, dest, argv) {
 
     if (pkgData) {
         // Assume changes were made ¯\_(ツ)_/¯
-        await fs.writeFile(pkgFile, JSON.stringify(pkgData, null, 2));
+        await writeFile(pkgFile, JSON.stringify(pkgData, null, 2));
     }
 
     const sourceDirectory = join(resolve(cwd, dest), 'src');
 
     // Copy over template.html
-    if (!repo.includes('widget')) {
-        const templateSrc = resolve(__dirname, join('..', 'resources', 'template.html'));
+    if (!template.includes('widget')) {
+        const templateSrc = resolve(__dirname, join('resources', 'template.html'));
         const templateDest = join(sourceDirectory, 'template.html');
         await copyFileToDestination(templateSrc, templateDest);
     }
 
     // Copy over sw.js
-    if (!repo.includes('widget')) {
-        const serviceWorkerSrc = resolve(__dirname, join('..', 'resources', 'sw.js'));
+    if (!template.includes('widget')) {
+        const serviceWorkerSrc = resolve(__dirname, join('resources', 'sw.js'));
         const serviceWorkerDest = join(sourceDirectory, 'sw.js');
         await copyFileToDestination(serviceWorkerSrc, serviceWorkerDest);
     }
@@ -405,8 +367,3 @@ async function command(repo, dest, argv) {
 	`)}\n\n`,
     );
 }
-
-module.exports = {
-    command,
-    options,
-};

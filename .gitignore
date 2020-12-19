@@ -1,6 +1,9 @@
 # Dependency directories
 node_modules/
 
+# Built output
+dist/
+
 # Ignore IDE files
 .idea/
 
