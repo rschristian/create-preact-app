@@ -2,33 +2,15 @@ import { promisify } from 'util';
 import { glob } from 'glob';
 // @ts-ignore
 import gittar from 'gittar';
-import os from 'os';
 import { existsSync, mkdirSync } from 'fs';
-import { copyFile, mkdir, readFile, writeFile } from 'fs/promises';
+import { copyFile, readFile, writeFile } from 'fs/promises';
 import { green } from 'kleur/colors';
 import { resolve, join } from 'path';
-import { prompt } from 'prompts';
 import isValidName from 'validate-npm-package-name';
-import {
-    info,
-    isDir,
-    error,
-    trim,
-    warn,
-    dirExists,
-    normalizeTemplatesResponse,
-    templateInfo,
-    ProcessedRepo,
-} from '../util';
+import { info, isDir, error, trim, warn } from '../util';
 import { install, initGit } from '../lib/setup';
 import { ArgvOption, validateArgs } from './validateArgs';
-import {
-    CUSTOM_TEMPLATE,
-    FALLBACK_TEMPLATE_OPTIONS,
-    ORG,
-    TEMPLATES_CACHE_FILENAME,
-    TEMPLATES_CACHE_FOLDER,
-} from '../constants';
+import { ORG } from '../constants';
 
 const globPromise = promisify(glob);
 
@@ -45,11 +27,6 @@ export const options: ArgvOption[] = [
         name: '--cwd',
         description: 'A directory to use instead of $PWD',
         default: '.',
-    },
-    {
-        name: '--force',
-        description: 'Force destination output; will override!',
-        default: false,
     },
     {
         name: '--install',
@@ -73,111 +50,10 @@ type Argv = {
     dest: string;
     name: string;
     cwd: string;
-    force: boolean;
     install: boolean;
     git: boolean;
     verbose: boolean;
 };
-
-// Formulate Questions if `create` args are missing
-function requestParams(argv: Argv, templates: ProcessedRepo[]) {
-    const cwd = resolve(argv.cwd);
-
-    return [
-        {
-            type: argv.template ? null : 'select',
-            name: 'template',
-            message: 'Pick a template',
-            choices: templates,
-            initial: 0,
-        },
-        {
-            type: (prev: string) => (prev === 'custom' ? 'text' : null),
-            name: 'template',
-            message: 'Remote template to clone (user/repo#tag)',
-        },
-        {
-            type: argv.dest ? null : 'text',
-            name: 'dest',
-            message: 'Directory to create the app',
-        },
-        {
-            type: (prev: string) => (!dirExists(cwd, prev || argv.dest) ? null : 'confirm'),
-            name: 'force',
-            message: 'The destination directory exists. Overwrite?',
-            initial: false,
-            onState: (state: { value: string; aborted: boolean }) => {
-                if (state.aborted || !state.value) {
-                    process.stdout.write('\n');
-                    warn('Aborting due to existing directory');
-                    process.exit();
-                }
-            },
-        },
-        {
-            type: argv.name ? null : 'text',
-            name: 'name',
-            message: 'The name of your application',
-        },
-        {
-            type: 'confirm',
-            name: 'install',
-            message: 'Install dependencies',
-            initial: true,
-        },
-        {
-            type: argv.git ? null : 'confirm',
-            name: 'git',
-            message: 'Initialize a `git` repository',
-            initial: false,
-        },
-    ];
-}
-
-async function updateTemplatesCache() {
-    const cacheFilePath = join(os.homedir(), TEMPLATES_CACHE_FOLDER, TEMPLATES_CACHE_FILENAME);
-    try {
-        const repos = await templateInfo();
-        await writeFile(cacheFilePath, JSON.stringify(repos, null, 2), 'utf-8');
-    } catch (err) {
-        error(`\nFailed to update template cache\n ${err}`);
-    }
-}
-
-async function fetchTemplates() {
-    let templates = [];
-    const cacheFolder = join(os.homedir(), TEMPLATES_CACHE_FOLDER);
-    const cacheFilePath = join(os.homedir(), TEMPLATES_CACHE_FOLDER, TEMPLATES_CACHE_FILENAME);
-
-    try {
-        // fetch the repos list from the github API
-        info('Fetching official templates:\n');
-
-        // check if `.cache` folder exists or not, and create if does not exists
-        if (!existsSync(cacheFolder)) await mkdir(cacheFolder);
-
-        // If cache file doesn't exist, then hit the API and fetch the data
-        if (!existsSync(cacheFilePath)) {
-            const repos = await templateInfo();
-            await writeFile(cacheFilePath, JSON.stringify(repos, null, 2), 'utf-8');
-        }
-
-        // update the cache file without blocking the rest of the tasks.
-        await updateTemplatesCache();
-
-        // fetch the API response from cache file
-        const templatesFromCache = await readFile(cacheFilePath, 'utf-8');
-        const parsedTemplates = JSON.parse(templatesFromCache);
-        const officialTemplates = normalizeTemplatesResponse(parsedTemplates || []);
-
-        templates = officialTemplates.concat(CUSTOM_TEMPLATE);
-    } catch (e) {
-        // in case github API fails to fetch the data, fallback to the hard coded listings
-        templates = FALLBACK_TEMPLATE_OPTIONS.concat(CUSTOM_TEMPLATE);
-    }
-
-    return templates;
-}
 
 async function copyFileToDestination(srcPath: string, destPath: string, force = false) {
     if (!existsSync(destPath) || force) await copyFile(srcPath, destPath);
@@ -185,20 +61,6 @@ async function copyFileToDestination(srcPath: string, destPath: string, force = 
 
 export async function command(template: string, dest: string, argv: Argv): Promise<void> {
     validateArgs(argv, options, 'create');
-    // Prompt if incomplete data
-    if (!template || !dest) {
-        const templates = await fetchTemplates();
-        const questions = requestParams(argv, templates);
-        const onCancel = () => {
-            info('Aborting execution');
-            process.exit();
-        };
-        const response = await prompt(questions, { onCancel });
-
-        Object.assign(argv, response);
-        template = template || response.template;
-        dest = dest || response.dest;
-    }
 
     if (!template || !dest) {
         warn('Insufficient arguments!');
@@ -211,26 +73,8 @@ export async function command(template: string, dest: string, argv: Argv): Promi
     const packageManager = /yarn/.test(process.env.npm_execpath || '') ? 'yarn' : 'npm';
     const exists = isDir(target);
 
-    if (exists && !argv.force) {
-        return error(
-            'Refusing to overwrite current directory! Please specify a different destination or use the `--force` flag',
-            1,
-        );
-    }
-
-    if (exists && argv.force) {
-        const { enableForce } = await prompt({
-            type: 'confirm',
-            name: 'enableForce',
-            message: "You are using '--force'. Do you wish to continue?",
-            initial: false,
-        });
-
-        if (enableForce) {
-            info('Initializing project in the current directory!');
-        } else {
-            return error('Refusing to overwrite current directory!', 1);
-        }
+    if (exists) {
+        return error('Refusing to overwrite current directory! Please specify a different destination.', 1);
     }
 
     // Use `--name` value or `dest` dir's name

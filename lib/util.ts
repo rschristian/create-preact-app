@@ -1,5 +1,4 @@
 import { blue, yellow, red } from 'kleur/colors';
-import { normalize, resolve } from 'path';
 import { statSync, existsSync } from 'fs';
 import fetch from 'isomorphic-unfetch';
 // @ts-ignore
@@ -14,10 +13,6 @@ const symbols = {
 
 export function isDir(str: string): boolean {
     return existsSync(str) && statSync(str).isDirectory();
-}
-
-export function dirExists(workingDir: string, destDir: string): boolean {
-    return isDir(resolve(workingDir, destDir));
 }
 
 export async function templateInfo(): Promise<UnprocessedRepo[]> {
@@ -47,10 +42,6 @@ export function error(text: string, code = 1): void {
     code && process.exit(code);
 }
 
-export function normalizePath(str: string): string {
-    return normalize(str).replace(/\\/g, '/');
-}
-
 type UnprocessedRepo = {
     name: string;
     full_name: string;
@@ -62,11 +53,3 @@ export type ProcessedRepo = {
     value: string;
     description: string;
 };
-
-export function normalizeTemplatesResponse(repos: UnprocessedRepo[] = []): ProcessedRepo[] {
-    return repos.map((repo) => ({
-        title: repo.name || '',
-        value: repo.full_name || '',
-        description: repo.description || '',
-    }));
-}
