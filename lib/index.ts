@@ -5,7 +5,7 @@ import { error } from './util';
 import { command as create } from './commands/create';
 import { command as list } from './commands/create';
 
-const prog = sade('create-preact-app').version('0.1.2');
+const prog = sade('create-preact-app').version('0.1.3');
 
 prog
     .command('create <template> <dest>', '', { default: true })

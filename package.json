@@ -1,6 +1,6 @@
 {
   "name": "@rschristian/create-preact-app",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "source": "lib/index.ts",
   "main": "dist/index.js",
   "bin": "dist/index.js",
