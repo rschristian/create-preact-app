@@ -6,8 +6,7 @@
     "moduleResolution": "node",
     "resolveJsonModule": true,
     "noImplicitAny": true,
-    "strict": true,
-    "declaration": false
+    "strict": true
   },
   "include": ["lib"]
 }

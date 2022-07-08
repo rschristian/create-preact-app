@@ -1,9 +1,7 @@
-import { blue, yellow, red } from 'kleur/colors';
 import { statSync, existsSync } from 'fs';
+
+import { blue, yellow, red } from 'kleur/colors';
 import fetch from 'isomorphic-unfetch';
-// @ts-ignore
-import which from 'which';
-import { TEMPLATES_REPO_URL } from './constants';
 
 const symbols = {
     info: blue('ℹ'),
@@ -16,11 +14,7 @@ export function isDir(str: string): boolean {
 }
 
 export async function templateInfo(): Promise<UnprocessedRepo[]> {
-    return await fetch(TEMPLATES_REPO_URL).then((r) => r.json());
-}
-
-export function hasCommand(str: string): boolean {
-    return !!which.sync(str, { nothrow: true });
+    return await fetch('https://api.github.com/users/preactjs-templates/repos').then((r) => r.json());
 }
 
 export function trim(str: string): string {
@@ -28,7 +22,7 @@ export function trim(str: string): string {
 }
 
 export function info(text: string, code?: number): void {
-    process.stderr.write(`${symbols.info + blue(' INFO ') + text}\n`);
+    process.stdout.write(`${symbols.info + blue(' INFO ') + text}\n`);
     code && process.exit(code);
 }
 
@@ -46,6 +40,7 @@ type UnprocessedRepo = {
     name: string;
     full_name: string;
     description: string;
+    archived: boolean;
 };
 
 export type ProcessedRepo = {

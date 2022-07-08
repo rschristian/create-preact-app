@@ -2,25 +2,31 @@
 // @ts-ignore
 import sade from 'sade';
 import { error } from './util';
-import pkg from '../package.json';
-import commands from './commands';
+import { command as create } from './commands/create';
+import { command as list } from './commands/create';
 
-const ver = process.version;
-const min = pkg.engines.node;
-if (ver.substring(1).localeCompare(min.match(/\d+/g)!.join('.'), 'en', { numeric: true }) === -1) {
-    error(`You are using Node ${ver} but create-preact-app requires Node ${min}. Please upgrade Node to continue!`, 1);
-}
+const prog = sade('create-preact-app').version('0.1.2');
 
-const prog = sade('create-preact-app').version(pkg.version);
+prog
+    .command('create <template> <dest>', '', { default: true })
+    .describe('Create a new application')
+    .option('--name', 'The application name')
+    .option('--cwd', 'A directory to use instead of $PWD', '.')
+    .option('--install', 'Install dependencies', true)
+    .option('--git', 'Initialize git repository', true)
+    .option('--verbose', 'Verbose output', false)
+    .action(create);
 
-const createCommand = prog
-    .command('create [template] [dest]', '', { default: true })
-    .describe('Create a new application');
-commands.createOptions.forEach((option) => {
-    createCommand.option(option.name, option.description, option.default);
+prog
+    .command('list')
+    .describe('List official templates')
+    .action(list);
+
+prog.parse(process.argv, {
+    unknown: (arg: string) => {
+		const cmd = process.argv[2];
+		error(
+			`Invalid argument '${arg}' passed to ${cmd}. Please refer to 'preact ${cmd} --help' for the full list of options.\n`
+		);
+	},
 });
-createCommand.action(commands.create);
-
-prog.command('list').describe('List official templates').action(commands.list);
-
-prog.parse(process.argv);
