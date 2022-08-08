@@ -1,9 +1,17 @@
+import fetch from 'isomorphic-unfetch';
 import { bold, magenta } from 'kleur/colors';
-import { error, info, templateInfo } from '../util';
+import { error, info } from '../util';
+
+type UnprocessedRepo = {
+    name: string;
+    full_name: string;
+    description: string;
+    archived: boolean;
+};
 
 export async function command(): Promise<void> {
     try {
-        const repos = await templateInfo();
+        const repos: UnprocessedRepo[] = await fetch('https://api.github.com/users/preactjs-templates/repos').then((r) => r.json());
 
         info('\nAvailable official templates: \n');
 
